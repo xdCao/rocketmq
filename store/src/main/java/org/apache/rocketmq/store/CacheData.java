@@ -11,8 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicInteger;
+
 
 /**
  * @program: rocketmq-all
@@ -30,7 +29,6 @@ public class CacheData {
     private final ConcurrentHashMap<String/*topic*/, MemoryDataWithIndex> dataMap = new ConcurrentHashMap<>();
 
 
-
     private final MemoryMessageStore memoryMessageStore;
 
     private HashMap<String/* topic-queueid */, Long/* index */> topicQueueTable = new HashMap<String, Long>(1024);
@@ -38,9 +36,6 @@ public class CacheData {
     private final PutMessageLock putMessageLock;
 
     private volatile long beginTimeInLock = 0;
-
-
-
 
 
     public CacheData(final MemoryMessageStore memoryMessageStore) {
@@ -87,7 +82,7 @@ public class CacheData {
             MemoryDataWithIndex memoryDataWithIndex = dataMap.get(msg.getTopic());
 
             if (memoryDataWithIndex == null) {
-                dataMap.put(msg.getTopic(),new MemoryDataWithIndex());
+                dataMap.put(msg.getTopic(), new MemoryDataWithIndex());
                 memoryDataWithIndex = dataMap.get(msg.getTopic());
             }
 
@@ -104,7 +99,7 @@ public class CacheData {
             log.warn("[NOTIFYME]putMessage in lock cost time(ms)={}, bodyLength={} AppendMessageResult={}", eclipseTimeInLock, msg.getBody().length, result);
         }
 
-        result = new AppendMessageResult(AppendMessageStatus.PUT_OK, 0, msg.getBody()==null?0:msg.getBody().length, msg.getMsgId(), msg.getStoreTimestamp(), 0, 0);
+        result = new AppendMessageResult(AppendMessageStatus.PUT_OK, 0, msg.getBody() == null ? 0 : msg.getBody().length, msg.getMsgId(), msg.getStoreTimestamp(), 0, 0);
 
         PutMessageResult putMessageResult = new PutMessageResult(PutMessageStatus.PUT_OK, result);
 
@@ -132,7 +127,7 @@ public class CacheData {
 
     public long getMaxOffset(String topic) {
 
-        return dataMap.get(topic)==null?0:dataMap.get(topic).getNextIndex().get()-1;
+        return dataMap.get(topic) == null ? 0 : dataMap.get(topic).getNextIndex().get() - 1;
 
     }
 
@@ -146,21 +141,17 @@ public class CacheData {
         List<SelectMappedBufferResult> results = new ArrayList<>();
 
 
-
-        for (long i = offset; i < offset+maxMsgNums; i++) {
+        for (long i = offset; i < offset + maxMsgNums; i++) {
             if (i >= dataWithIndex.getNextIndex().get()) {
                 break;
             }
 
             MessageExtBrokerInner message = dataWithIndex.getMessage((int) i);
-            SelectMappedBufferResult result = new SelectMappedBufferResult(i,message.getBody()==null?null: ByteBuffer.wrap(message.getBody()),0,null);
+            SelectMappedBufferResult result = new SelectMappedBufferResult(i, message.getBody() == null ? null : ByteBuffer.wrap(message.getBody()), 0, null);
             results.add(result);
 
         }
 
         return results;
-
-
-
     }
 }

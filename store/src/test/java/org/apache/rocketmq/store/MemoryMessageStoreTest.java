@@ -22,7 +22,7 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * @program: rocketmq-all
- * @description:
+ * @description:测试非持久化broker
  * @author: xdCao
  * @create: 2018-08-20 20:57
  **/
@@ -58,7 +58,7 @@ public class MemoryMessageStoreTest {
         messageStoreConfig.setMapedFileSizeConsumeQueue(1024 * 4);
         messageStoreConfig.setMaxHashSlotNum(100);
         messageStoreConfig.setMaxIndexNum(100 * 10);
-        MessageStore master = new MemoryMessageStore(messageStoreConfig, null, new MemoryMessageStoreTest.MyMessageArrivingListener(), new BrokerConfig());
+        MessageStore master = new MemoryMessageStore(messageStoreConfig, null, new BrokerConfig());
 
         boolean load = master.load();
         assertTrue(load);
@@ -90,7 +90,7 @@ public class MemoryMessageStoreTest {
         messageStoreConfig.setMaxIndexNum(100 * 100);
         messageStoreConfig.setFlushDiskType(FlushDiskType.SYNC_FLUSH);
         messageStoreConfig.setFlushIntervalConsumeQueue(1);
-        return new MemoryMessageStore(messageStoreConfig, new BrokerStatsManager("simpleTest"), new MemoryMessageStoreTest.MyMessageArrivingListener(), new BrokerConfig());
+        return new MemoryMessageStore(messageStoreConfig, new BrokerStatsManager("simpleTest"), new BrokerConfig());
     }
 
     @Test

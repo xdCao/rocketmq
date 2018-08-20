@@ -23,11 +23,9 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+
 import java.util.concurrent.atomic.AtomicLong;
 
-import static org.apache.rocketmq.store.config.BrokerRole.SLAVE;
 
 /**
  * @program: rocketmq-all
@@ -47,8 +45,6 @@ public class MemoryMessageStore implements MessageStore {
 
     private final StoreStatsService storeStatsService;
 
-    private volatile boolean shutdown = true;
-
     private final BrokerConfig brokerConfig;
 
     private final BrokerStatsManager brokerStatsManager;
@@ -57,24 +53,19 @@ public class MemoryMessageStore implements MessageStore {
 
     private FileLock lock;
 
-    private final MessageArrivingListener messageArrivingListener;
-
     private AtomicLong printTimes = new AtomicLong(0);
-
-    boolean shutDownNormal = false;
-
 
     private final RunningFlags runningFlags = new RunningFlags();
 
+    private volatile boolean shutdown = true;
 
     public MemoryMessageStore(final MessageStoreConfig messageStoreConfig, final BrokerStatsManager brokerStatsManager,
-                              final MessageArrivingListener messageArrivingListener, final BrokerConfig brokerConfig) throws FileNotFoundException {
+                              final BrokerConfig brokerConfig) throws FileNotFoundException {
         this.messageStoreConfig = messageStoreConfig;
-        this.cacheData = new CacheData(this);
-        this.messageArrivingListener = messageArrivingListener;
         this.brokerConfig = brokerConfig;
         this.brokerStatsManager = brokerStatsManager;
         this.storeStatsService = new StoreStatsService();
+        this.cacheData = new CacheData(this);
 
 
         File file = new File(StorePathConfigHelper.getLockFile(messageStoreConfig.getStorePathRootDir()));
@@ -121,7 +112,6 @@ public class MemoryMessageStore implements MessageStore {
 
             if (this.runningFlags.isWriteable() && dispatchBehindBytes() == 0) {
                 this.deleteFile(StorePathConfigHelper.getAbortFile(this.messageStoreConfig.getStorePathRootDir()));
-                shutDownNormal = true;
             } else {
                 log.warn("the store may be wrong, so shutdown abnormally, and keep abort file.");
             }
@@ -132,6 +122,7 @@ public class MemoryMessageStore implements MessageStore {
                 lock.release();
                 lockFile.close();
             } catch (IOException e) {
+                log.error("lock release exception: ", e);
             }
         }
     }
