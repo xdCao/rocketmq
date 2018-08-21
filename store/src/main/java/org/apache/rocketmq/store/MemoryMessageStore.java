@@ -61,6 +61,7 @@ public class MemoryMessageStore implements MessageStore {
 
     public MemoryMessageStore(final MessageStoreConfig messageStoreConfig, final BrokerStatsManager brokerStatsManager,
                               final BrokerConfig brokerConfig) throws FileNotFoundException {
+
         this.messageStoreConfig = messageStoreConfig;
         this.brokerConfig = brokerConfig;
         this.brokerStatsManager = brokerStatsManager;
@@ -239,29 +240,28 @@ public class MemoryMessageStore implements MessageStore {
 
     @Override
     public long getMaxOffsetInQueue(String topic, int queueId) {
-        return 0;
+        return cacheData.getMaxOffset(topic);
     }
 
     @Override
     public long getMinOffsetInQueue(String topic, int queueId) {
-        return 0;
+        return cacheData.getMinOffset(topic);
     }
 
     @Override
     public long getCommitLogOffsetInQueue(String topic, int queueId, long consumeQueueOffset) {
-        return 0;
-    }
-
-    @Override
-    public long getOffsetInQueueByTime(String topic, int queueId, long timestamp) {
-        return 0;
+        return cacheData.getCommitLogOffsetInQueue(topic, consumeQueueOffset);
     }
 
     @Override
     public MessageExt lookMessageByOffset(long commitLogOffset) {
-        return null;
+        return cacheData.lookMessageByOffset(commitLogOffset);
     }
 
+    @Override
+    public SelectMappedBufferResult getCommitLogData(long offset) {
+        return cacheData.getCommitLogData(offset);
+    }
 
     public MessageStoreConfig getMessageStoreConfig() {
 
@@ -275,6 +275,12 @@ public class MemoryMessageStore implements MessageStore {
 
     public StoreStatsService getStoreStatsService() {
         return storeStatsService;
+    }
+
+
+    @Override
+    public long getOffsetInQueueByTime(String topic, int queueId, long timestamp) {
+        return 0;
     }
 
     @Override
@@ -327,10 +333,6 @@ public class MemoryMessageStore implements MessageStore {
         return 0;
     }
 
-    @Override
-    public SelectMappedBufferResult getCommitLogData(long offset) {
-        return null;
-    }
 
     @Override
     public boolean appendToCommitLog(long startOffset, byte[] data) {

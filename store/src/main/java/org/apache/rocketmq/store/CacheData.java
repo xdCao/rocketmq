@@ -2,6 +2,7 @@ package org.apache.rocketmq.store;
 
 import org.apache.rocketmq.common.UtilAll;
 import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.sysflag.MessageSysFlag;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
@@ -11,6 +12,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 
 /**
@@ -23,30 +26,20 @@ public class CacheData {
 
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
-    private final ThreadLocal<CommitLog.MessageExtBatchEncoder> batchEncoderThreadLocal;
-
-
-    private final ConcurrentHashMap<String/*topic*/, MemoryDataWithIndex> dataMap = new ConcurrentHashMap<>();
-
+    private final CopyOnWriteArrayList<MessageExtBrokerInner> dataList = new CopyOnWriteArrayList<>();
 
     private final MemoryMessageStore memoryMessageStore;
 
-    private HashMap<String/* topic-queueid */, Long/* index */> topicQueueTable = new HashMap<String, Long>(1024);
+    private final HashMap<String/* topic-queueid */, List<Integer>/* index */> topicTable = new HashMap<String, List<Integer>>(1024);
 
     private final PutMessageLock putMessageLock;
 
-    private volatile long beginTimeInLock = 0;
+    private AtomicInteger offset = new AtomicInteger(0);
 
 
     public CacheData(final MemoryMessageStore memoryMessageStore) {
         this.memoryMessageStore = memoryMessageStore;
         this.putMessageLock = memoryMessageStore.getMessageStoreConfig().isUseReentrantLockWhenPutMessage() ? new PutMessageReentrantLock() : new PutMessageSpinLock();
-        batchEncoderThreadLocal = new ThreadLocal<CommitLog.MessageExtBatchEncoder>() {
-            @Override
-            protected CommitLog.MessageExtBatchEncoder initialValue() {
-                return new CommitLog.MessageExtBatchEncoder(memoryMessageStore.getMessageStoreConfig().getMaxMessageSize());
-            }
-        };
     }
 
 
@@ -57,9 +50,6 @@ public class CacheData {
         AppendMessageResult result = null;
 
         StoreStatsService storeStatsService = this.memoryMessageStore.getStoreStatsService();
-
-        String topic = msg.getTopic();
-        int queueId = msg.getQueueId();
 
         final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
@@ -73,24 +63,23 @@ public class CacheData {
         putMessageLock.lock(); //spin or ReentrantLock ,depending on store config
         try {
             long beginLockTimestamp = this.memoryMessageStore.getSystemClock().now();
-            this.beginTimeInLock = beginLockTimestamp;
 
             // Here settings are stored timestamp, in order to ensure an orderly
             // global
             msg.setStoreTimestamp(beginLockTimestamp);
 
-            MemoryDataWithIndex memoryDataWithIndex = dataMap.get(msg.getTopic());
+            dataList.add(msg);
 
-            if (memoryDataWithIndex == null) {
-                dataMap.put(msg.getTopic(), new MemoryDataWithIndex());
-                memoryDataWithIndex = dataMap.get(msg.getTopic());
+            List<Integer> integers = topicTable.get(msg.getTopic());
+            if (integers == null) {
+                topicTable.put(msg.getTopic(), new ArrayList<Integer>());
+                integers = topicTable.get(msg.getTopic());
             }
 
-            memoryDataWithIndex.putMessage(msg);
-
+            integers.add(offset.getAndIncrement());
 
             eclipseTimeInLock = this.memoryMessageStore.getSystemClock().now() - beginLockTimestamp;
-            beginTimeInLock = 0;
+
         } finally {
             putMessageLock.unlock();
         }
@@ -105,7 +94,7 @@ public class CacheData {
 
         // Statistics
         storeStatsService.getSinglePutMessageTopicTimesTotal(msg.getTopic()).incrementAndGet();
-        storeStatsService.getSinglePutMessageTopicSizeTotal(topic).addAndGet(result.getWroteBytes());
+        storeStatsService.getSinglePutMessageTopicSizeTotal(msg.getTopic()).addAndGet(result.getWroteBytes());
 
         /*暂时先不支持事务*/
 //        handleHA(result, putMessageResult, msg);
@@ -114,44 +103,93 @@ public class CacheData {
     }
 
 
-    public MessageExtBrokerInner getMessage(String topic, int offset) {
+    public long getMaxOffset(String topic) {
 
-        if (dataMap.get(topic) == null) {
+        List<Integer> indexes = topicTable.get(topic);
+        if (indexes == null || indexes.size() == 0) {
+            return 0L;
+        }
+
+        return indexes.get(indexes.size() - 1);
+
+    }
+
+
+    public long getMinOffset(String topic) {
+
+        List<Integer> indexes = topicTable.get(topic);
+        if (indexes == null || indexes.size() == 0) {
+            return 0L;
+        }
+
+        return indexes.get(0);
+
+    }
+
+
+    public long getCommitLogOffsetInQueue(String topic, long offset) {
+        List<Integer> indexes = topicTable.get(topic);
+        if (indexes == null || indexes.size() == 0 || offset >= indexes.size()) {
+            return 0L;
+        }
+
+        return indexes.get((int) offset);
+    }
+
+    public MessageExt lookMessageByOffset(long commitLogOffset) {
+
+        if (commitLogOffset >= dataList.size()) {
             return null;
         }
 
-        return dataMap.get(topic).getMessage(offset);
-
+        return dataList.get((int) commitLogOffset);
     }
 
+    public SelectMappedBufferResult getCommitLogData(long offset) {
 
-    public long getMaxOffset(String topic) {
+        MessageExt messageExt = lookMessageByOffset(offset);
 
-        return dataMap.get(topic) == null ? 0 : dataMap.get(topic).getNextIndex().get() - 1;
+        byte[] body = messageExt.getBody();
 
+        if (body == null || body.length == 0) {
+            return null;
+        }
+
+        SelectMappedBufferResult result = new SelectMappedBufferResult(offset, ByteBuffer.wrap(body), body.length, null);
+        return result;
     }
+
 
     public List<SelectMappedBufferResult> getMessagesFromOffset(String topic, long offset, int maxMsgNums) {
 
-        MemoryDataWithIndex dataWithIndex = dataMap.get(topic);
-        if (dataWithIndex == null || offset >= dataWithIndex.getNextIndex().get()) {
+        List<Integer> indexs = topicTable.get(topic);
+
+        if (indexs == null || indexs.size() == 0) {
             return null;
         }
 
+        int numCount = 0;
+
         List<SelectMappedBufferResult> results = new ArrayList<>();
 
+        for (int i = 0; i < indexs.size(); i++) {
 
-        for (long i = offset; i < offset + maxMsgNums; i++) {
-            if (i >= dataWithIndex.getNextIndex().get()) {
+            if (numCount >= maxMsgNums) {
                 break;
             }
 
-            MessageExtBrokerInner message = dataWithIndex.getMessage((int) i);
+            if (indexs.get(i) < offset) {
+                continue;
+            }
+
+            MessageExtBrokerInner message = dataList.get(indexs.get(i));
             SelectMappedBufferResult result = new SelectMappedBufferResult(i, message.getBody() == null ? null : ByteBuffer.wrap(message.getBody()), 0, null);
             results.add(result);
+            numCount++;
 
         }
 
         return results;
+
     }
 }
